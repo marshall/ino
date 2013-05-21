@@ -1,0 +1,79 @@
+{#
+vim:noexpandtab filetype=jinja
+#}
+
+{% from "Makefile.common.jinja" import iquote, src_build_dir with context %}
+
+{#
+ #   Macros to transform *.c and *.cpp -> *.o
+ #}
+{% macro compile(filemap, recipe) %}
+{% for source, target in filemap.items() %}
+{{ target.path }} : {{ source.path }}
+	@echo {{ (source.dirname|basename|pjoin(source.filename))|colorize('yellow') }}
+	@mkdir -p {{ target.path|dirname }}
+	{{v}} {{ recipe|replace("{source_file}", source.path)|replace("{object_file}", "$@") }}
+include {{ target.path|depsname }}
+{% endfor %}
+{% endmacro %}
+
+{% macro compile_c(filemap) %}
+{% set recipe = e['recipe.c.o.pattern']|replace('{includes}', e.cflags) %}
+{{ compile(filemap, recipe) }}
+{% endmacro %}
+
+{% macro compile_cpp(filemap) %}
+{% set recipe = e['recipe.cpp.o.pattern']|replace('{includes}', e.cflags ~ ' ' ~ e.cxxflags) %}
+{{ compile(filemap, recipe) }}
+{% endmacro %}
+
+{#
+ #   library sources -> *.a
+ #}
+{% set libs = e.used_libs|libmap(e.build_dir) %}
+{% for source_dir, target in libs.items() %}
+{% set c = source_dir|glob('*.c')|filemap(target.dirname, e.names.obj) %}
+{% set cpp = (source_dir|glob('*.cpp'))|filemap(target.dirname, e.names.obj) %}
+{% set libobjs = c.target_paths() + cpp.target_paths() %}
+{{ compile_c(c) }}
+{{ compile_cpp(cpp) }}
+{{ target.path }} : {{ libobjs }}
+	@echo {{ ('Linking ' ~ target.filename|basename)|colorize('green') }}
+	{{v}} {{ e['recipe.ar.pattern']|replace('{archive_file}', target.path|relative_to(e.build_dir))|replace('"{object_file}"', '$^') }}
+{% endfor %}
+
+{#
+ #   *.c -> *.o
+ #}
+{% set c = e.src_dir|glob('*.c')|filemap(src_build_dir, e.names.obj) %}
+{{ compile_c(c) }}
+
+{#
+ #   *.cpp -> *.o
+ #}
+{% set cpp = (e.src_dir|glob('*.cpp') + src_build_dir|glob('*.cpp'))|filemap(src_build_dir, e.names.obj) %}
+{{ compile_cpp(cpp) }}
+
+{#
+ #   *.o -> elf
+ #}
+{% set objs = c.target_paths() + cpp.target_paths() + libs.target_paths() %}
+{% set elf = e.build_dir|pjoin('firmware.elf') %}
+{{ elf }} : {{ objs }}
+	@echo {{ 'Linking firmware.elf'|colorize('green') }}
+{% set recipe = e['recipe.c.combine.pattern']|replace('{object_files}', '$^') %}
+{% set recipe = recipe|replace('{archive_file}', 'arduino/libarduino.a') %}
+{% set recipe = recipe|replace('syscalls_sam3.c.o', 'arduino/syscalls_sam3.o') %}
+	{{v}}{{ recipe }}
+
+{#
+ #   elf -> hex
+ #}
+{{ e.bin_path }} : {{ elf }}
+	@echo {{ ('Converting to ' ~ e.bin_path)|colorize('green') }}
+	{{v}}{{ e['recipe.objcopy.hex.pattern'] }}
+
+include {{ e.deps }}
+
+all : {{ e.bin_path }}
+	@true

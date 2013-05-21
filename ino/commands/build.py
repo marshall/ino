@@ -46,10 +46,18 @@ class Build(Command):
         parser.add_argument('-v', '--verbose', default=False, action='store_true',
                             help='Verbose make output')
 
-    def discover(self):
-        self.e.find_arduino_dir('arduino_core_dir', 
-                                ['hardware', 'arduino', 'cores', 'arduino'], 
-                                ['Arduino.h'] if self.e.arduino_lib_version.major else ['WProgram.h'], 
+    def discover(self, board_key):
+        self.board = board = self.e.board_model(board_key)
+
+        cores_dir = ['hardware', 'arduino', 'cores', 'arduino']
+        variants_dir = ['hardware', 'arduino', 'variants']
+        if self.e.use_arduino15_dirs():
+            cores_dir.insert(2, board['arch'])
+            variants_dir.insert(2, board['arch'])
+
+        self.e.find_arduino_dir('arduino_core_dir',
+                                cores_dir,
+                                ['Arduino.h'] if self.e.arduino_lib_version.major else ['WProgram.h'],
                                 'Arduino core library')
 
         self.e.find_arduino_dir('arduino_libraries_dir', ['libraries'],
@@ -57,48 +65,131 @@ class Build(Command):
 
         if self.e.arduino_lib_version.major:
             self.e.find_arduino_dir('arduino_variants_dir',
-                                    ['hardware', 'arduino', 'variants'],
+                                    variants_dir,
                                     human_name='Arduino variants directory')
 
+        toolchain_prefix = 'avr-' if board['arch'] == 'avr' else 'arm-none-eabi-'
+
         toolset = [
-            ('cc', 'avr-gcc'),
-            ('cxx', 'avr-g++'),
-            ('ar', 'avr-ar'),
-            ('objcopy', 'avr-objcopy'),
+            ('cc', toolchain_prefix + 'gcc'),
+            ('cxx', toolchain_prefix + 'g++'),
+            ('ar', toolchain_prefix + 'ar'),
+            ('objcopy', toolchain_prefix + 'objcopy'),
         ]
 
+        tools_dir = 'avr' if board['arch'] == 'avr' else 'g++_arm_none_eabi'
+        toolchain_dir = ['hardware', 'tools', tools_dir, 'bin']
         for tool_key, tool_binary in toolset:
             self.e.find_arduino_tool(
-                tool_key, ['hardware', 'tools', 'avr', 'bin'], 
+                tool_key, toolchain_dir,
                 items=[tool_binary], human_name=tool_binary)
 
     def setup_flags(self, board_key):
         board = self.e.board_model(board_key)
-        mcu = '-mmcu=' + board['build']['mcu']
+        if board['arch'] == 'avr':
+            mcu = '-mmcu=' + board['build']['mcu']
+        else:
+            mcu = '-mcpu=' + board['build']['mcu']
+
         self.e['cflags'] = SpaceList([
             mcu,
             '-ffunction-sections',
             '-fdata-sections',
             '-g',
-            '-Os', 
+            '-Os',
             '-w',
             '-DF_CPU=' + board['build']['f_cpu'],
             '-DARDUINO=' + str(self.e.arduino_lib_version.as_int()),
             '-I' + self.e['arduino_core_dir'],
         ])
 
-        if 'vid' in board['build']:
-            self.e['cflags'].append('-DUSB_VID=%s' % board['build']['vid'])
-        if 'pid' in board['build']:
-            self.e['cflags'].append('-DUSB_PID=%s' % board['build']['pid'])
-            
+        if 'extra_flags' in board['build']:
+            extra_flags = board['build']['extra_flags']
+            extra_flags.replace('{build.vid}', board['build'].get('vid'))
+            extra_flags.replace('{build.pid}', board['build'].get('pid'))
+            self.e['cflags'].append(extra_flags)
+        else:
+            if 'vid' in board['build']:
+                self.e['cflags'].append('-DUSB_VID=%s' % board['build']['vid'])
+            if 'pid' in board['build']:
+                self.e['cflags'].append('-DUSB_PID=%s' % board['build']['pid'])
+
+        variant_dir = os.path.join(self.e.arduino_variants_dir,
+                                   board['build']['variant'])
+
         if self.e.arduino_lib_version.major:
-            variant_dir = os.path.join(self.e.arduino_variants_dir, 
-                                       board['build']['variant'])
             self.e.cflags.append('-I' + variant_dir)
 
         self.e['cxxflags'] = SpaceList(['-fno-exceptions'])
         self.e['elfflags'] = SpaceList(['-Os', '-Wl,--gc-sections', mcu])
+
+        if 'ldscript' in board['build']:
+            self.e['elfflags'] += ' -T%s/%s' % (variant_dir, board['build']['ldscript'])
+
+        self.e['libs'] = '-lm'
+        if board['arch'] == 'sam':
+            self.e['libs'] += ' -lgcc'
+
+        self.e['names'] = {
+            'obj': '%s.o',
+            'lib': 'lib%s.a',
+            'cpp': '%s.cpp',
+            'deps': '%s.d',
+        }
+
+    def setup_flags15(self, board_key):
+        board = self.e.board_model(board_key)
+        platform = self.e.platform(board['arch'])
+
+        arduino_dir = self.e.find_arduino_dir('arduino_base_dir', [''],
+                                              human_name='Arduino base dir')
+
+        if board['arch'] == 'sam':
+            system_dir = self.e.find_arduino_dir('arduino_system_dir',
+                                                 ['hardware', 'arduino', board['arch'], 'system'],
+                                                 human_name='Arduino system dir')
+
+        variant_dir = os.path.join(self.e.arduino_variants_dir,
+                                   board['build']['variant'])
+
+        recipe_vars = dict(platform)
+        self.e['cflags'] = SpaceList([
+            '-I' + self.e['arduino_core_dir'],
+            '-I' + variant_dir,
+        ])
+
+        self.e['cxxflags'] = SpaceList([])
+        recipe_vars['software'] = 'Arduino'
+        recipe_vars['runtime'] = { 'ide': {
+            'path': arduino_dir,
+            'version': str(self.e.arduino_lib_version.as_int())
+        }}
+
+        recipe_vars['build'] = dict(platform['build'])
+        recipe_vars['build'].update(board['build'])
+        recipe_vars['build']['path'] = self.e.build_dir
+        if board['arch'] == 'sam':
+            recipe_vars['build']['system'] = { 'path': system_dir }
+
+        recipe_vars['build']['variant'] = { 'path': variant_dir }
+        recipe_vars['build']['project_name'] = 'firmware'
+        if 'path' not in recipe_vars['compiler']:
+            recipe_vars['compiler']['path'] = self.e.find_arduino_dir('avr_compiler_dir',
+                                                                      ['hardware', 'tools', 'avr', 'bin'],
+                                                                      human_name='AVR compiler dir') + '/'
+        def deepiter(d, fn, prefix=''):
+            for key, value in d.iteritems():
+                if isinstance(value, dict):
+                    deepiter(value, fn, prefix=prefix+key+'.')
+                else:
+                    fn(d, prefix+key, value)
+
+        def store_recipe(parent, recipe_key, recipe):
+            self.e['recipe.' + recipe_key] = self.e.replace_vars(recipe, **recipe_vars)
+        deepiter(platform['recipe'], store_recipe)
+
+        bin_suffix = 'bin' if board['arch'] == 'sam' else 'hex'
+        self.e['bin_path'] = os.path.join(self.e.build_dir, 'firmware.%s' % bin_suffix)
 
         self.e['names'] = {
             'obj': '%s.o',
@@ -148,7 +239,8 @@ class Build(Command):
 
     def _scan_dependencies(self, dir, lib_dirs, inc_flags):
         output_filepath = os.path.join(self.e.build_dir, os.path.basename(dir), 'dependencies.d')
-        self.make('Makefile.deps', inc_flags=inc_flags, src_dir=dir, output_filepath=output_filepath)
+        makefile = 'Makefile15.deps' if self.e.use_arduino15_dirs() else 'Makefile.deps'
+        self.make(makefile, inc_flags=inc_flags, src_dir=dir, output_filepath=output_filepath)
         self.e['deps'].append(output_filepath)
 
         # search for dependencies on libraries
@@ -156,6 +248,7 @@ class Build(Command):
         # with regexes to find entries that start with
         # libraries dirname
         regexes = dict((lib, re.compile(r'\s' + lib + re.escape(os.path.sep))) for lib in lib_dirs)
+
         used_libs = set()
         with open(output_filepath) as f:
             for line in f:
@@ -169,6 +262,10 @@ class Build(Command):
         self.e['deps'] = SpaceList()
 
         lib_dirs = [self.e.arduino_core_dir] + list_subdirs(self.e.lib_dir) + list_subdirs(self.e.arduino_libraries_dir)
+        if self.e.use_arduino15_dirs():
+            lib_dirs.append(os.path.join(self.e.arduino_variants_dir,
+                                         self.board['build']['variant']))
+
         inc_flags = self.recursive_inc_lib_flags(lib_dirs)
 
         # If lib A depends on lib B it have to appear before B in final
@@ -202,9 +299,17 @@ class Build(Command):
         self.e['cflags'].extend(self.recursive_inc_lib_flags(used_libs))
 
     def run(self, args):
-        self.discover()
-        self.setup_flags(args.board_model)
+        self.discover(args.board_model)
+        if self.e.use_arduino15_dirs():
+            self.setup_flags15(args.board_model)
+        else:
+            self.setup_flags(args.board_model)
+
         self.create_jinja(verbose=args.verbose)
         self.make('Makefile.sketch')
         self.scan_dependencies()
-        self.make('Makefile')
+
+        if self.e.use_arduino15_dirs():
+            self.make('Makefile15')
+        else:
+            self.make('Makefile')

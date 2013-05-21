@@ -5,6 +5,7 @@ from __future__ import absolute_import
 import os.path
 import subprocess
 import platform
+import re
 
 from time import sleep
 from serial import Serial
@@ -80,7 +81,13 @@ class Upload(Command):
         # this wait a moment for the bootloader to enumerate. On Windows, also must
         # deal with the fact that the COM port number changes from bootloader to
         # sketch.
-        if board['bootloader']['path'] == "caterina":
+        is_leonardo = False
+        if self.e.use_arduino15_dirs():
+            is_leonardo = 'bootloader' in board and 'caterina' in board['bootloader']['file']
+        else:
+            is_leonardo = board['bootloader']['path'] == 'caterina'
+
+        if is_leonardo:
             caterina_port = None
             before = self.e.list_serial_ports()
             if port in before:
@@ -118,6 +125,38 @@ class Upload(Command):
 
             port = caterina_port
 
+        if self.e.use_arduino15_dirs():
+            self._do_upload_15(board, port, protocol)
+        else:
+            self._do_upload(board, port, protocol)
+
+    def _do_upload_15(self, board, port, protocol):
+        tool_name = board['upload']['tool']
+        tool = self.e.platform(board['arch'])['tools'][tool_name]
+
+        arduino_dir = self.e.find_arduino_dir('arduino_base_dir', [''],
+            human_name='Arduino base dir')
+
+        upload_vars = dict(tool)
+        upload_vars['upload'].update(board['upload'])
+        upload_vars['build'] = dict(board['build'])
+        upload_vars['runtime'] = { 'ide': { 'path': arduino_dir } }
+        upload_vars['config'] = { 'path': self.e['avrdude.conf'] }
+        upload_vars['serial'] = { 'port': { 'file': port.replace('/dev/', '') } }
+        upload_vars['build']['path'] = self.e.build_dir
+        upload_vars['build']['project_name'] = 'firmware'
+        upload_vars['upload']['verbose'] = ''
+
+        upload_cmd = self.e.replace_vars(tool['upload']['pattern'], **upload_vars)
+        if board['arch'] == 'sam':
+            subprocess.call(['stty', '-f', port, '1200'])
+
+        subprocess.call(upload_cmd, shell=True)
+
+        if board['arch'] == 'sam':
+            subprocess.call(['stty', '-f', port, '115200'])
+
+    def _do_upload(self, board, port, protcol):
         # call avrdude to upload .hex
         subprocess.call([
             self.e['avrdude'],

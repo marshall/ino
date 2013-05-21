@@ -167,36 +167,64 @@ class Environment(dict):
             places = self.arduino_dist_dir_guesses
         return [os.path.join(p, *dirname_parts) for p in places]
 
+    def use_arduino15_dirs(self):
+        return self.arduino_lib_version.major >= 1 and \
+               self.arduino_lib_version.minor >= 5
+
     def board_models(self):
         if 'board_models' in self:
             return self['board_models']
 
-        boards_txt = self.find_arduino_file('boards.txt', ['hardware', 'arduino'], 
-                                            human_name='Board description file (boards.txt)')
-
         self['board_models'] = BoardModels()
         self['board_models'].default = self.default_board_model
-        with open(boards_txt) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                multikey, val = line.split('=')
-                multikey = multikey.split('.')
 
-                subdict = self['board_models']
-                for key in multikey[:-1]:
-                    if key not in subdict:
-                        subdict[key] = {}
-                    subdict = subdict[key]
+        if self.use_arduino15_dirs():
+            for arch in ['sam', 'avr']:
+                boards_txt = self.find_arduino_file(arch+'_boards.txt', ['hardware', 'arduino', arch],
+                                                    items=['boards.txt'], human_name='Board description file (%s/boards.txt)' % arch)
+                self['board_models'].parse(boards_txt, arch)
 
-                subdict[multikey[-1]] = val
+        else:
+            boards_txt = self.find_arduino_file('boards.txt', ['hardware', 'arduino'],
+                                                human_name='Board description file (boards.txt)')
+            self['board_models'].parse(boards_txt, 'avr')
 
         return self['board_models']
 
+    def platforms(self):
+        if 'platforms' in self:
+            return self['platforms']
+
+        self['platforms'] = OrderedDict()
+        self['platforms'].default = 'avr'
+
+        if self.use_arduino15_dirs():
+            for arch in ['sam', 'avr']:
+                platform_txt = self.find_arduino_file(arch+'_platform.txt', ['hardware', 'arduino', arch],
+                                                      items=['platform.txt'], human_name='Platform description file (%s/platform.txt)' % arch)
+                self['platforms'][arch] = ArduinoData()
+                self['platforms'][arch].parse(platform_txt)
+
+        return self['platforms']
+
     def board_model(self, key):
         return self.board_models()[key]
-    
+
+    def platform(self, arch):
+        return self.platforms()[arch]
+
+    def replace_vars(self, value, **kwargs):
+        def replace_var(match):
+            multikey = match.group(1).split('.')
+            d = kwargs
+            for key in multikey:
+                if key not in d:
+                    return '{' + '.'.join(multikey) + '}'
+                d = d[key]
+            return self.replace_vars(d, **kwargs)
+
+        return re.sub(r'\{([^{}]+)\}', replace_var, value)
+
     def add_board_model_arg(self, parser):
         help = '\n'.join([
             "Arduino board model (default: %(default)s)",
@@ -276,8 +304,84 @@ class Environment(dict):
 
         return self['arduino_lib_version']
 
+class ArduinoData(OrderedDict):
+    def parse(self, txtfile):
+        with open(txtfile) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                multikey, val = line.split('=', 1)
+                multikey = multikey.split('.')
 
-class BoardModels(OrderedDict):
+                self.parse_key(multikey, val)
+
+    def parse_key(self, multikey, val):
+        self.parse_multikey(multikey, val)
+
+    def parse_multikey(self, multikey, val, subdict=None):
+        subdict = subdict or self
+        last = None
+        for key in multikey[:-1]:
+            if key not in subdict:
+                subdict[key] = {}
+            last = subdict
+            subdict = subdict[key]
+
+        if isinstance(subdict, str):
+            name = subdict
+            subdict = last[name] = {'name': name}
+
+        self.set_value(subdict, multikey[-1], val)
+
+    def set_value(self, dict, key, val):
+        dict[key] = val
+
     def format(self):
         map = [(key, val['name']) for key, val in self.iteritems()]
-        return format_available_options(map, head_width=12, default=self.default)
+        head_width = reduce(lambda a, b: max(a, b), [len(k) for k in self.keys()])
+        return format_available_options(map, head_width=head_width, default=self.default)
+
+class BoardModels(ArduinoData):
+    def __init__(self):
+        super(BoardModels, self).__init__()
+        self.cpus = {}
+
+    def parse(self, txtfile, arch):
+        super(BoardModels, self).parse(txtfile)
+        for model in self.cpus:
+            for cpu in self.cpus[model]:
+                d = self[model + '_' + cpu] = dict(self.cpus[model][cpu])
+                d['name'] = self[model]['name'] + ' w/ ' + d['name']
+                u = dict(self[model])
+                del u['name']
+
+                d.update(u)
+
+            del self[model]
+
+        for model in self:
+            if 'arch' not in self[model]:
+                self[model]['arch'] = arch
+
+    def parse_key(self, multikey, val):
+        if multikey[0] == 'menu':
+            self.parse_menu(multikey[1:], val)
+            return
+
+        super(BoardModels, self).parse_key(multikey, val)
+
+    def parse_menu(self, menukey, val):
+        if menukey[0] == 'cpu':
+            if len(menukey) == 1:
+                return
+            model = menukey[1]
+            cpu = menukey[2]
+
+            if len(menukey) == 3:
+                if model not in self.cpus:
+                    self.cpus[model] = {}
+
+                self.cpus[model][cpu] = {'name': val}
+            else:
+                self.parse_multikey(menukey[3:], val, subdict=self.cpus[model][cpu])
