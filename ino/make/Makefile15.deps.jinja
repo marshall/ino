@@ -16,9 +16,9 @@
 {% for source, target in cpp.items() %}
 {{ target.path }} : {{ source.path }}
 	@mkdir -p {{ target.path|dirname }}
-#	{{v}}{{ e.cc }} {{ e.cflags }} {{ inc_flags }} {{ iquote(source) }} -MM $^ > $@
 {% set recipe = e['recipe.c.o.pattern']|replace('{includes}', e.cflags ~ ' ' ~ inc_flags ~ ' -MM') %}
-{% set recipe = recipe|replace('{source_file}', '$^')|replace('-o "{object_file}"', '> $@') %}
+{% set recipe = recipe|replace('"{source_file}"', '$^')|replace('{object_file}', '$@') %}
+{% set recipe = recipe|replace('{source_file}', '$^') %}
 	{{v}} {{ recipe }}
 	{# prepend build path to a target in the generated file and 
 	   add .d file itself as a target so that changes in a header file would rebuild dependency files
@@ -29,10 +29,15 @@
 {#
  #   *.d -> united output
  #}
+
 {{ output_filepath }} : {{ cpp.target_paths() }}
 	@echo {{ ('Scanning dependencies of ' ~ src_dir|basename)|colorize('cyan') }}
 	@mkdir -p {{ output_filepath|dirname }}
+{% if cpp|length > 0 %}
 	{{v}}cat $^ > $@;
+{% else %}
+	{{v}}touch $@;
+{% endif %}
 
 all : {{ output_filepath }}
 	@true

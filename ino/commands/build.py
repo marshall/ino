@@ -228,7 +228,7 @@ class Build(Command):
         makefile = self.render_template(makefile + '.jinja', makefile, **kwargs)
         ret = subprocess.call(['make', '-f', makefile, 'all'])
         if ret != 0:
-            raise Abort("Make failed with code %s" % ret)
+            raise Abort("Make of %s failed with code %s" % (makefile, ret))
 
     def recursive_inc_lib_flags(self, libdirs):
         flags = SpaceList()
@@ -271,7 +271,7 @@ class Build(Command):
         # If lib A depends on lib B it have to appear before B in final
         # list so that linker could link all together correctly
         # but order of `_scan_dependencies` is not defined, so...
-        
+
         # 1. Get dependencies of sources in arbitrary order
         used_libs = list(self._scan_dependencies(self.e.src_dir, lib_dirs, inc_flags))
 
