@@ -23,9 +23,9 @@ from ino.utils import format_available_options
 from ino.exc import Abort
 
 
-class Version(namedtuple('Version', 'major minor')):
+class Version(namedtuple('Version', 'major minor revision')):
 
-    regex = re.compile(ur'^\d+(\.\d+)?')
+    regex = re.compile(ur'^\d+(\.\d+(\.\d+)?)?')
 
     @classmethod
     def parse(cls, s):
@@ -34,7 +34,8 @@ class Version(namedtuple('Version', 'major minor')):
         #   0022ubuntu0.1
         #   0022-macosx-20110822
         #   1.0
-        # We have to extract a 2-int-tuple (major, minor)
+        #   1.5.2
+        # We have to extract a 3-int-tuple (major, minor, revision)
         match = cls.regex.match(s)
         if not match:
             raise Abort("Could not parse Arduino library version: %s" % s)
@@ -44,10 +45,10 @@ class Version(namedtuple('Version', 'major minor')):
         return cls(*map(int, v.split('.')))
 
     def as_int(self):
-        return self.major * 100 + self.minor
+        return self.major * 100 + self.minor * 10 + self.revision
 
     def __str__(self):
-        return '%s.%s' % self
+        return '%s.%s.%s' % self
 
 
 class Environment(dict):

@@ -63,6 +63,11 @@ class Build(Command):
         self.e.find_arduino_dir('arduino_libraries_dir', ['libraries'],
                                 human_name='Arduino standard libraries')
 
+        if self.e.use_arduino15_dirs():
+            self.e.find_arduino_dir('arduino_arch_libraries_dir',
+                                    ['hardware', 'arduino', board['arch'], 'libraries'],
+                                    human_name='Arduino %s libraries' % board['arch'].upper())
+
         if self.e.arduino_lib_version.major:
             self.e.find_arduino_dir('arduino_variants_dir',
                                     variants_dir,
@@ -159,7 +164,7 @@ class Build(Command):
         ])
 
         self.e['cxxflags'] = SpaceList([])
-        recipe_vars['software'] = 'Arduino'
+        recipe_vars['software'] = 'ARDUINO'
         recipe_vars['runtime'] = { 'ide': {
             'path': arduino_dir,
             'version': str(self.e.arduino_lib_version.as_int())
@@ -261,10 +266,13 @@ class Build(Command):
     def scan_dependencies(self):
         self.e['deps'] = SpaceList()
 
-        lib_dirs = [self.e.arduino_core_dir] + list_subdirs(self.e.lib_dir) + list_subdirs(self.e.arduino_libraries_dir)
+        lib_dirs = [self.e.arduino_core_dir] + list_subdirs(self.e.lib_dir) + \
+                   list_subdirs(self.e.arduino_libraries_dir)
+
         if self.e.use_arduino15_dirs():
-            lib_dirs.append(os.path.join(self.e.arduino_variants_dir,
-                                         self.board['build']['variant']))
+            lib_dirs.extend(list_subdirs(os.path.join(self.e.arduino_variants_dir,
+                                         self.board['build']['variant'])))
+            lib_dirs.extend(list_subdirs(self.e.arduino_arch_libraries_dir))
 
         inc_flags = self.recursive_inc_lib_flags(lib_dirs)
 
@@ -274,7 +282,6 @@ class Build(Command):
 
         # 1. Get dependencies of sources in arbitrary order
         used_libs = list(self._scan_dependencies(self.e.src_dir, lib_dirs, inc_flags))
-
         # 2. Get dependencies of dependency libs themselves: existing dependencies
         # are moved to the end of list maintaining order, new dependencies are appended
         scanned_libs = set()
