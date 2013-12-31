@@ -142,7 +142,12 @@ class Upload(Command):
         upload_vars['build'] = dict(board['build'])
         upload_vars['runtime'] = { 'ide': { 'path': arduino_dir } }
         upload_vars['config'] = { 'path': self.e['avrdude.conf'] }
-        upload_vars['serial'] = { 'port': { 'file': port.replace('/dev/', '') } }
+
+        if board['arch'] == 'sam':
+            upload_vars['serial'] = { 'port': { 'file': port.replace('/dev/', '') } }
+        else:
+            upload_vars['serial'] = { 'port' : port }
+
         upload_vars['build']['path'] = self.e.build_dir
         upload_vars['build']['project_name'] = 'firmware'
         upload_vars['upload']['verbose'] = ''
