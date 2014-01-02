@@ -329,9 +329,9 @@ class ArduinoData(OrderedDict):
             last = subdict
             subdict = subdict[key]
 
-        if isinstance(subdict, str):
-            name = subdict
-            subdict = last[name] = {'name': name}
+            if isinstance(subdict, str):
+                name = subdict
+                subdict = last[name] = {'name': name}
 
         self.set_value(subdict, multikey[-1], val)
 
