@@ -91,6 +91,7 @@ class Build(Command):
 
     def setup_flags(self, board_key):
         board = self.e.board_model(board_key)
+
         if board['arch'] == 'avr':
             mcu = '-mmcu=' + board['build']['mcu']
         else:
@@ -176,6 +177,7 @@ class Build(Command):
         if board['arch'] == 'sam':
             recipe_vars['build']['system'] = { 'path': system_dir }
 
+        recipe_vars['build']['arch'] = board['arch'].upper()
         recipe_vars['build']['variant'] = { 'path': variant_dir }
         recipe_vars['build']['project_name'] = 'firmware'
         if 'path' not in recipe_vars['compiler']:
@@ -270,8 +272,10 @@ class Build(Command):
                    list_subdirs(self.e.arduino_libraries_dir)
 
         if self.e.use_arduino15_dirs():
-            lib_dirs.extend(list_subdirs(os.path.join(self.e.arduino_variants_dir,
-                                         self.board['build']['variant'])))
+            variant_dir = os.path.join(self.e.arduino_variants_dir,
+                                       self.board['build']['variant'])
+            lib_dirs.append(variant_dir)
+            lib_dirs.extend(list_subdirs(variant_dir))
             lib_dirs.extend(list_subdirs(self.e.arduino_arch_libraries_dir))
 
         inc_flags = self.recursive_inc_lib_flags(lib_dirs)
