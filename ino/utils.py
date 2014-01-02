@@ -38,15 +38,15 @@ class FileMap(OrderedDict):
 
 
 def list_subdirs(dirname, recursive=False, exclude=[]):
-    entries = [e for e in os.listdir(dirname) if e not in exclude and not e.startswith('.')]
-    paths = [os.path.join(dirname, e) for e in entries]
-    dirs = filter(os.path.isdir, paths)
-    if recursive:
-        sub = itertools.chain.from_iterable(
-            list_subdirs(d, recursive=True, exclude=exclude) for d in dirs)
-        dirs.extend(sub)
-    return dirs
+    if not recursive:
+        entries = [e for e in os.listdir(dirname) if e not in exclude and not e.startswith('.')]
+        paths = [os.path.join(dirname, e) for e in entries]
+        return filter(os.path.isdir, paths)
 
+    subdirs = []
+    for root, dirs, files in os.walk(dirname):
+        entries = [e for e in dirs if e not in exclude and not e.startswith('.')]
+        return [os.path.join(root, e) for e in entries]
 
 def format_available_options(items, head_width, head_color='cyan', 
                              default=None, default_mark="[DEFAULT]", 
